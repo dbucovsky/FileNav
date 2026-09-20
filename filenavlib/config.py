@@ -38,3 +38,20 @@ SEVEN_ZIP_FALLBACK_PATHS = [
     r"C:\Program Files\7-Zip\7z.exe",
     r"C:\Program Files (x86)\7-Zip\7z.exe",
 ]
+
+# Directory *names* (matched case-insensitively against the basename) that are
+# skipped by default -- machine-generated noise, not real user data. A folder
+# matching one of these is excluded the same way a .filenav-skip marker would
+# exclude it (the folder and everything under it). Override with
+# --no-default-ignores / extend with --ignore-dirs.
+DEFAULT_IGNORE_DIR_NAMES = {
+    # version-control internals
+    ".git", ".svn", ".hg",
+    # dev/build caches -- reproducible from source, often huge
+    "node_modules", "__pycache__", ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache",
+    "dist", "build",
+    # Windows system folders -- normally permission-denied anyway
+    "system volume information", "$recycle.bin",
+    # editor/IDE config
+    ".vscode", ".idea",
+}

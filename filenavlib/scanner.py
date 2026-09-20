@@ -3,7 +3,7 @@ and hands each record off to a caller-supplied sink (the JSON writer).
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from . import archives, hashing, media
@@ -18,6 +18,7 @@ class ScanOptions:
     max_archive_depth: int = 10
     extract_media_metadata: bool = True
     self_path_norm: str = ""
+    ignore_dir_names: frozenset = field(default_factory=frozenset)  # lowercased basenames
 
 
 def _iso(ts):
@@ -27,8 +28,14 @@ def _iso(ts):
         return None
 
 
-def should_skip_dir(dirpath):
-    return os.path.isfile(os.path.join(dirpath, SKIP_MARKER))
+def should_skip_dir(dirpath, ignore_dir_names=frozenset()):
+    """Return a skip reason ("marker" / "ignore_list") or None."""
+    if os.path.isfile(os.path.join(dirpath, SKIP_MARKER)):
+        return "marker"
+    basename = os.path.basename(os.path.normpath(dirpath)).lower()
+    if basename in ignore_dir_names:
+        return "ignore_list"
+    return None
 
 
 def build_file_record(fpath, opts):
@@ -79,10 +86,20 @@ def walk_root(root, opts, emit_record, errors, scratch_dir, stats):
             stats["archive_entry_bytes"] += rec["size_bytes"]
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=on_error):
-        if should_skip_dir(dirpath):
+        skip_reason = should_skip_dir(dirpath, opts.ignore_dir_names)
+        if skip_reason:
             dirnames[:] = []
-            stats["skipped_dirs"] += 1
+            stats["skipped_dirs_marker" if skip_reason == "marker" else "skipped_dirs_ignore_list"] += 1
             continue
+
+        if opts.ignore_dir_names:
+            kept = []
+            for d in dirnames:
+                if d.lower() in opts.ignore_dir_names:
+                    stats["skipped_dirs_ignore_list"] += 1
+                else:
+                    kept.append(d)
+            dirnames[:] = kept
 
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)

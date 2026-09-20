@@ -56,12 +56,22 @@ Other options (see `filenav.py --help`):
 | `--max-nested-extract-mb` | 500 | Nested archives larger than this are not expanded |
 | `--max-archive-depth` | 10 | Archive-in-archive nesting limit |
 | `--no-media` | off | Skip image/video metadata extraction (faster) |
+| `--ignore-dirs NAME [NAME ...]` | (none) | Extra directory names to skip, on top of the default list |
+| `--no-default-ignores` | off | Disable the built-in default ignore list entirely |
 | `--progress-every` | 5000 | Print progress every N records (0 to disable) |
 
 ## Skipping folders
 
 Drop a file named `.filenav-skip` (any content, even empty) into a folder to
 exclude that folder and everything under it from the scan.
+
+A built-in default list of noise directories is also skipped automatically
+(matched case-insensitively by folder name, anywhere in the tree): `.git`,
+`.svn`, `.hg`, `node_modules`, `__pycache__`, `.venv`, `venv`, `.tox`,
+`.mypy_cache`, `.pytest_cache`, `dist`, `build`, `System Volume Information`,
+`$RECYCLE.BIN`, `.vscode`, `.idea`. Add more with `--ignore-dirs`, or turn the
+whole default list off with `--no-default-ignores` (e.g. if you deliberately
+want `.git` history included in a duplicate-file audit).
 
 ## Output format
 

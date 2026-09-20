@@ -26,14 +26,40 @@ def test_skip_marker_excludes_folder_and_subtree(tmp_path):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "errors": 0, "skipped_dirs": 0, "self_deferred": False}
+              "archive_entry_bytes": 0, "errors": 0,
+              "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "self_deferred": False}
 
     with tempfile.TemporaryDirectory() as scratch:
         walk_root(str(tmp_path), opts, records.append, errors, scratch, stats)
 
     names = {r["filename"] for r in records}
     assert names == {"file.txt"}
-    assert stats["skipped_dirs"] == 1
+    assert stats["skipped_dirs_marker"] == 1
+
+
+def test_ignore_dir_names_excludes_folder_and_subtree(tmp_path):
+    (tmp_path / "keep").mkdir()
+    (tmp_path / "keep" / "file.txt").write_text("hello")
+
+    noisy = tmp_path / "node_modules"
+    noisy.mkdir()
+    (noisy / "package.js").write_text("noise")
+    (noisy / "sub").mkdir()
+    (noisy / "sub" / "nested.js").write_text("also noise")
+
+    opts = ScanOptions(self_path_norm="", ignore_dir_names=frozenset({"node_modules"}))
+    records = []
+    errors = []
+    stats = {"files": 0, "bytes": 0, "archives": 0, "archive_entries": 0,
+              "archive_entry_bytes": 0, "errors": 0,
+              "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "self_deferred": False}
+
+    with tempfile.TemporaryDirectory() as scratch:
+        walk_root(str(tmp_path), opts, records.append, errors, scratch, stats)
+
+    names = {r["filename"] for r in records}
+    assert names == {"file.txt"}
+    assert stats["skipped_dirs_ignore_list"] == 1
 
 
 def test_hash_file_matches_hashlib(tmp_path):
@@ -105,6 +131,10 @@ def test_main_end_to_end_produces_valid_json_with_self_record(tmp_path):
     (skip_dir / ".filenav-skip").write_text("")
     (skip_dir / "ignored.txt").write_text("ignored")
 
+    git_dir = root / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]")
+
     with zipfile.ZipFile(root / "archive.zip", "w") as zf:
         zf.writestr("inside.txt", b"zip contents")
 
@@ -119,8 +149,10 @@ def test_main_end_to_end_produces_valid_json_with_self_record(tmp_path):
     filenames = {rec["filename"] for rec in data["files"]}
     assert "a.txt" in filenames
     assert "ignored.txt" not in filenames
+    assert "config" not in filenames  # inside .git, skipped by the default ignore list
     assert "archive.zip" in filenames
     assert "inside.txt" in filenames
+    assert data["summary"]["directories_skipped_via_ignore_list"] >= 1
     assert "out.json" in filenames
 
     self_records = [r for r in data["files"] if r.get("self_reference")]
@@ -130,3 +162,45 @@ def test_main_end_to_end_produces_valid_json_with_self_record(tmp_path):
     assert data["summary"]["files_recorded"] >= 3
     assert data["summary"]["archives_expanded"] == 1
     assert data["summary"]["archive_entries_recorded"] >= 1
+
+
+def test_no_default_ignores_flag_allows_git_contents_through(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".git").mkdir()
+    (root / ".git" / "config").write_text("[core]")
+
+    output_path = tmp_path / "out.json"
+    rc = filenav.main([
+        str(output_path), "--root", str(root), "--no-media", "--no-default-ignores", "--progress-every", "0",
+    ])
+    assert rc == 0
+
+    with open(output_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    filenames = {rec["filename"] for rec in data["files"]}
+    assert "config" in filenames
+
+
+def test_ignore_dirs_flag_adds_a_custom_name(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    custom = root / "my_scratch_folder"
+    custom.mkdir()
+    (custom / "temp.txt").write_text("noise")
+    (root / "keep.txt").write_text("real data")
+
+    output_path = tmp_path / "out.json"
+    rc = filenav.main([
+        str(output_path), "--root", str(root), "--no-media",
+        "--ignore-dirs", "my_scratch_folder", "--progress-every", "0",
+    ])
+    assert rc == 0
+
+    with open(output_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    filenames = {rec["filename"] for rec in data["files"]}
+    assert "keep.txt" in filenames
+    assert "temp.txt" not in filenames

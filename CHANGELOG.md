@@ -1,5 +1,13 @@
 # Changelog
 
+## V0.2.0 — 2026-09-20 02:00
+### Changes
+- **Add a default ignore list for noise directories, plus `--ignore-dirs`/`--no-default-ignores`**
+  - Beyond the existing `.filenav-skip` marker, folders are now also skipped by *name* (case-insensitive, matched anywhere in the tree) against a built-in default list: version-control internals (`.git`, `.svn`, `.hg`), dev/build caches (`node_modules`, `__pycache__`, `.venv`, `venv`, `.tox`, `.mypy_cache`, `.pytest_cache`, `dist`, `build`), Windows system folders (`System Volume Information`, `$RECYCLE.BIN`), and editor config (`.vscode`, `.idea`) — all machine-generated noise rather than real user data, and normally either regenerable, permission-denied, or (for `.git`) thousands of tiny internal blob files that would otherwise dominate a scan.
+  - `--ignore-dirs NAME [NAME ...]` adds more names on top of the default list; `--no-default-ignores` turns the default list off entirely (only `.filenav-skip` and any explicit `--ignore-dirs` still apply) for cases like deliberately wanting `.git` history included in a duplicate-file audit.
+  - The output JSON's `options` now records `default_ignores_applied` and the exact `ignore_dir_names` set used for that run; `summary` now reports `directories_skipped_via_marker` and `directories_skipped_via_ignore_list` separately (previously one combined `directories_skipped_via_marker` count).
+  - Matching subdirectories are pruned before `os.walk` descends into them (not just skipped once reached), avoiding a wasted directory listing for each one.
+
 ## V0.1.0 — 2026-09-20 01:15
 ### Changes
 - **Initial implementation of the filesystem inventory scanner**

@@ -26,13 +26,29 @@ next to `filenav.py`; anything with a path in it (`out\results.json`,
 | `--max-nested-extract-mb` | 500 | Nested archives bigger than this are left unexpanded |
 | `--max-archive-depth` | 10 | How many archive-in-archive levels to follow |
 | `--no-media` | off | Skip image/video metadata extraction |
+| `--ignore-dirs NAME [NAME ...]` | (none) | Extra folder names to skip, added to the default list |
+| `--no-default-ignores` | off | Turn off the built-in default ignore list |
 | `--progress-every` | 5000 | Progress line every N records (`0` = silent) |
 
-## The `.filenav-skip` rule
+## Folder exclusion
 
-Any folder containing a file literally named `.filenav-skip` (content doesn't
-matter, even empty) is excluded from the scan — that folder, its files, and
-every subfolder beneath it.
+Two mechanisms, and both apply the same way — the folder and everything below
+it is left out of the scan entirely:
+
+1. **`.filenav-skip` marker** — any folder containing a file literally named
+   `.filenav-skip` (content doesn't matter, even empty) is excluded.
+2. **Default ignore list** — a folder whose *name* (case-insensitive, matched
+   anywhere in the tree, not just at the root) is one of: `.git`, `.svn`,
+   `.hg`, `node_modules`, `__pycache__`, `.venv`, `venv`, `.tox`,
+   `.mypy_cache`, `.pytest_cache`, `dist`, `build`,
+   `System Volume Information`, `$RECYCLE.BIN`, `.vscode`, `.idea`. Extend it
+   with `--ignore-dirs NAME [NAME ...]`, or disable it entirely with
+   `--no-default-ignores`.
+
+The output JSON's `options.ignore_dir_names` and `options.default_ignores_applied`
+fields record exactly what was in effect for that run, and
+`summary.directories_skipped_via_marker` / `directories_skipped_via_ignore_list`
+report how many of each were actually skipped.
 
 ## Output JSON shape
 

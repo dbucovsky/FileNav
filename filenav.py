@@ -14,7 +14,9 @@ archives nested inside archives. Images and videos additionally get EXIF/
 metadata such as GPS location, capture date, device, and (for video) duration.
 
 Folders containing a file named ".filenav-skip" are skipped entirely, along
-with everything under them.
+with everything under them. A built-in default list of noise directories
+(.git, node_modules, __pycache__, Recycle Bin, etc.) is also skipped unless
+--no-default-ignores is passed; see --ignore-dirs to add more.
 """
 
 import argparse
@@ -27,6 +29,7 @@ from datetime import datetime
 
 from filenavlib.config import (
     DEFAULT_HASH_ALGO,
+    DEFAULT_IGNORE_DIR_NAMES,
     DEFAULT_MAX_ARCHIVE_DEPTH,
     DEFAULT_MAX_HASH_SIZE_MB,
     DEFAULT_MAX_NESTED_EXTRACT_MB,
@@ -60,6 +63,16 @@ def parse_args(argv):
     parser.add_argument("--max-archive-depth", type=int, default=DEFAULT_MAX_ARCHIVE_DEPTH,
                          help="Max archive-in-archive nesting to expand")
     parser.add_argument("--no-media", action="store_true", help="Skip image/video metadata extraction (faster)")
+    parser.add_argument(
+        "--ignore-dirs", nargs="*", default=[],
+        help="Extra directory names to skip entirely (case-insensitive, matched by basename), "
+             "in addition to the built-in default list",
+    )
+    parser.add_argument(
+        "--no-default-ignores", action="store_true",
+        help=f"Disable the built-in default ignore list ({', '.join(sorted(DEFAULT_IGNORE_DIR_NAMES))}); "
+             "only .filenav-skip and --ignore-dirs still apply",
+    )
     parser.add_argument("--progress-every", type=int, default=5000, help="Print progress every N files (0 to disable)")
     return parser.parse_args(argv)
 
@@ -75,6 +88,9 @@ def main(argv=None):
         print("No usable roots to scan (check --root / drive availability).", file=sys.stderr)
         return 1
 
+    ignore_dir_names = set() if args.no_default_ignores else set(DEFAULT_IGNORE_DIR_NAMES)
+    ignore_dir_names |= {name.lower() for name in args.ignore_dirs}
+
     opts = ScanOptions(
         hash_algo=args.hash_algo,
         max_hash_size_bytes=int(args.max_hash_size_mb * 1024 * 1024),
@@ -82,6 +98,7 @@ def main(argv=None):
         max_archive_depth=args.max_archive_depth,
         extract_media_metadata=not args.no_media,
         self_path_norm=os.path.normcase(os.path.abspath(output_path)),
+        ignore_dir_names=frozenset(ignore_dir_names),
     )
 
     scan_started = datetime.now()
@@ -96,6 +113,8 @@ def main(argv=None):
             "max_nested_extract_bytes": opts.max_nested_extract_bytes,
             "max_archive_depth": opts.max_archive_depth,
             "media_metadata": opts.extract_media_metadata,
+            "default_ignores_applied": not args.no_default_ignores,
+            "ignore_dir_names": sorted(opts.ignore_dir_names),
         },
     }
 
@@ -105,7 +124,8 @@ def main(argv=None):
     errors = []
     stats = {
         "files": 0, "bytes": 0, "archives": 0, "archive_entries": 0,
-        "archive_entry_bytes": 0, "errors": 0, "skipped_dirs": 0, "self_deferred": False,
+        "archive_entry_bytes": 0, "errors": 0,
+        "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "self_deferred": False,
     }
 
     def emit_record(record):
@@ -152,7 +172,8 @@ def main(argv=None):
         "archives_expanded": stats["archives"],
         "archive_entries_recorded": stats["archive_entries"],
         "archive_entry_bytes": stats["archive_entry_bytes"],
-        "directories_skipped_via_marker": stats["skipped_dirs"],
+        "directories_skipped_via_marker": stats["skipped_dirs_marker"],
+        "directories_skipped_via_ignore_list": stats["skipped_dirs_ignore_list"],
         "errors": stats["errors"],
         "output_file": output_path,
     }
