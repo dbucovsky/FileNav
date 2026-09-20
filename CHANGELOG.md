@@ -1,5 +1,23 @@
 # Changelog
 
+## V0.2.1 — 2026-09-20 09:45
+### Changes
+- **Fix a single bad record crashing (and discarding) an entire multi-hour scan** (reported directly: a full `C:\` scan died at ~381k files/6.5 minutes in)
+  - Root cause: `json.dumps(..., ensure_ascii=False)` happily stringifies a Python string containing lone surrogate code points (which real archive member names can decode to — Python's `tarfile` in particular falls back to `errors="surrogateescape"` for non-UTF-8 names), but writing that string to a UTF-8 file then raises `UnicodeEncodeError: 'utf-8' codec can't encode characters ...: surrogates not allowed` — and that exception was completely unhandled, killing the process and leaving an invalid, unparseable, truncated JSON file. All the work done up to that point was lost.
+  - `filenavlib/writer.py` now sanitizes every string field before writing (round-tripping any unrepresentable character through `surrogateescape`/`replace`, so only the handful of actually-broken characters become `<0xFFFD>` — normal Unicode text, accented names, emoji, etc. is completely unaffected and still written as real readable characters, not escaped).
+  - Defense in depth, since a whole-drive scan will keep surfacing surprises: `filenavlib/scanner.py` now wraps each file's processing (including its archive expansion) in `try/except`, and `filenavlib/archives.py` now wraps each archive member's processing the same way — one bad file or archive member is logged to `errors` and skipped, never aborts the rest of the scan.
+  - `filenav.py`'s top-level scan loop now also catches any exception (or Ctrl+C) that still somehow gets through, and finishes writing a syntactically valid JSON file regardless — `summary.aborted`/`summary.abort_reason` record that it happened, exit code is `1`, but everything scanned up to that point is preserved and loadable instead of thrown away.
+- **Suppress hachoir's own console warnings during video metadata extraction**
+  - hachoir prints parser warnings (`[warn] [Autofix] ...`) and errors directly to the console by default, which was cluttering scan output and made it look like something was failing when it wasn't. Set via `hachoir.core.config.quiet = True`.
+- **Stream errors to a sidecar log file instead of an unbounded in-memory list** (asked directly: are problem files listed anywhere, and can a large scan run the script out of memory?)
+  - Every error was already recorded in the output JSON's `errors` array, but that array was a plain Python list held fully in memory for the whole run — the one part of the design that didn't share the streaming-to-disk approach the `files` array already used, and so the one place scan-time memory could in principle grow without bound (e.g. a flaky network drive throwing permission errors across huge numbers of files).
+  - New `filenavlib/errorlog.py`: `ErrorSink`, a drop-in replacement for the plain list (same `.append()` interface) that writes every error to a sidecar `<output>.errors.log` file immediately as it happens (one JSON object per line, flushed after every write so nothing is lost even if the scan aborts hard right after), while keeping only a capped sample (first 1000) in memory for the main JSON.
+  - The main JSON's `errors` array is now that capped sample; `summary.errors` is the true total count (`errors.count`), `summary.errors_sample_truncated` says whether the sample left anything out, and `summary.error_log_file` points at the sidecar log.
+  - Also fixed a related drift bug this surfaced: the total error count was separately hand-tracked via `stats["errors"] += 1` at each call site, but two call sites (`os.walk`'s own `onerror` callback, and an unreachable root) appended to `errors` without incrementing it — so the reported count could under-count the real number of errors. Removed the redundant counter entirely; `errors.count` (from `ErrorSink`, incremented on every single `.append()`) is now the one authoritative total.
+- **Add a `yyyy-mm-dd-hh-mm-ss_` timestamp prefix on the output/error filenames, on by default**
+  - Both filenames are now prefixed with the local time the scan started (24-hour format), e.g. `output.json` → `2026-09-20-14-05-30_output.json`, and its error log gets the identical prefix (`2026-09-20-14-05-30_output.errors.log`) since it's derived from the already-prefixed output path. Repeated runs against the same output name no longer collide or silently overwrite each other, and filenames sort chronologically in a folder of past scans.
+  - `--no-timestamp-prefix` writes the exact filename given, unchanged (matches the previous behavior).
+
 ## V0.2.0 — 2026-09-20 02:00
 ### Changes
 - **Add a default ignore list for noise directories, plus `--ignore-dirs`/`--no-default-ignores`**

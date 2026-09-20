@@ -8,7 +8,17 @@ python filenav.py OUTPUT [--root PATH [PATH ...]] [options]
 
 `OUTPUT` is the JSON file to write. A bare filename (`results.json`) is written
 next to `filenav.py`; anything with a path in it (`out\results.json`,
-`C:\scans\results.json`) is used exactly as given.
+`C:\scans\results.json`) is used exactly as given, in either case as a
+*starting point* for the name — see timestamp prefixing next.
+
+### Timestamp prefix
+
+By default, both the output filename and its error log get a
+`yyyy-mm-dd-hh-mm-ss_` prefix (local time, 24-hour, the moment the scan
+started) — `results.json` becomes `2026-09-20-14-05-30_results.json`, and its
+error log is `2026-09-20-14-05-30_results.errors.log`. This means repeated
+runs never collide or overwrite each other, and filenames sort chronologically.
+Pass `--no-timestamp-prefix` to write the exact filename given instead.
 
 ### `--root`
 
@@ -28,6 +38,7 @@ next to `filenav.py`; anything with a path in it (`out\results.json`,
 | `--no-media` | off | Skip image/video metadata extraction |
 | `--ignore-dirs NAME [NAME ...]` | (none) | Extra folder names to skip, added to the default list |
 | `--no-default-ignores` | off | Turn off the built-in default ignore list |
+| `--no-timestamp-prefix` | off | Write the exact filename given, no `yyyy-mm-dd-hh-mm-ss_` prefix |
 | `--progress-every` | 5000 | Progress line every N records (`0` = silent) |
 
 ## Folder exclusion
@@ -49,6 +60,31 @@ The output JSON's `options.ignore_dir_names` and `options.default_ignores_applie
 fields record exactly what was in effect for that run, and
 `summary.directories_skipped_via_marker` / `directories_skipped_via_ignore_list`
 report how many of each were actually skipped.
+
+## Errors
+
+A file or archive member that couldn't be read/hashed/opened doesn't stop the
+scan — it's recorded as an error and skipped. Every error is streamed, as it
+happens, to a sidecar log next to the output file — `<output>.errors.log`
+(e.g. `output.json` → `output.errors.log`), one JSON object per line
+(`{"path": ..., "error": ...}`). It's independently greppable, and it's never
+lost even if the scan later aborts hard, since each line is flushed to disk
+immediately.
+
+The main JSON's own `errors` array is only a capped sample (the first 1000);
+`summary.errors` is the true total count, and `summary.errors_sample_truncated`
+says whether anything was left out of the embedded sample. The sidecar log
+always has every error regardless. This design keeps scan-time memory use
+bounded even in a pathological case (e.g. a flaky network drive throwing
+permission errors on huge numbers of files) — nothing about output size
+(JSON or error count) grows memory usage during the scan; everything streams
+to disk as it's produced.
+
+If something still goes wrong badly enough to abort the whole scan (an
+unexpected bug, or Ctrl+C), the output JSON is still finished as valid JSON
+with everything scanned up to that point — `summary.aborted` and
+`summary.abort_reason` record what happened, and the process exits with a
+non-zero status, but no data already collected is thrown away.
 
 ## Output JSON shape
 
@@ -92,7 +128,12 @@ report how many of each were actually skipped.
     }
   ],
   "errors": [ { "path": "...", "error": "..." } ],
-  "summary": { "files_recorded": 1234, "archives_expanded": 5, "elapsed_seconds": 42.1, "...": "..." }
+  "summary": {
+    "files_recorded": 1234, "archives_expanded": 5, "elapsed_seconds": 42.1,
+    "errors": 3, "errors_sample_truncated": false, "error_log_file": "C:\\...\\output.errors.log",
+    "aborted": false, "abort_reason": null,
+    "...": "..."
+  }
 }
 ```
 

@@ -17,7 +17,7 @@ class ScanOptions:
     max_nested_extract_bytes: int = 500 * 1024 * 1024
     max_archive_depth: int = 10
     extract_media_metadata: bool = True
-    self_path_norm: str = ""
+    self_path_norms: frozenset = field(default_factory=frozenset)  # this run's own output files
     ignore_dir_names: frozenset = field(default_factory=frozenset)  # lowercased basenames
 
 
@@ -104,22 +104,26 @@ def walk_root(root, opts, emit_record, errors, scratch_dir, stats):
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
 
-            if os.path.normcase(os.path.abspath(fpath)) == opts.self_path_norm:
+            if os.path.normcase(os.path.abspath(fpath)) in opts.self_path_norms:
                 stats["self_deferred"] = True
                 continue
 
-            record, error = build_file_record(fpath, opts)
-            if error:
-                errors.append(error)
-                stats["errors"] += 1
-                continue
+            # One misbehaving file (corrupt archive, unreadable metadata, odd
+            # encoding, ...) must never take the rest of a multi-hour scan down.
+            try:
+                record, error = build_file_record(fpath, opts)
+                if error:
+                    errors.append(error)
+                    continue
 
-            emit_record(record)
-            stats["files"] += 1
-            stats["bytes"] += record["size_bytes"]
+                emit_record(record)
+                stats["files"] += 1
+                stats["bytes"] += record["size_bytes"]
 
-            if record.get("archive_format"):
-                stats["archives"] += 1
-                archives.process_archive_file(
-                    fpath, [fpath], 1, opts, emit_archive_entry, errors, scratch_dir
-                )
+                if record.get("archive_format"):
+                    stats["archives"] += 1
+                    archives.process_archive_file(
+                        fpath, [fpath], 1, opts, emit_archive_entry, errors, scratch_dir
+                    )
+            except Exception as exc:
+                errors.append({"path": fpath, "error": f"unexpected error processing file: {exc}"})

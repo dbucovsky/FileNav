@@ -20,7 +20,11 @@ filenavlib/
                         partial dict or None rather than raising.
   writer.py                 Streams the "files" JSON array to disk one record
                         at a time instead of buffering the whole scan in
-                        memory.
+                        memory; sanitizes strings so an unwritable character
+                        can't crash the write.
+  errorlog.py                Streams every error to a sidecar log file as it
+                        happens, keeping only a bounded in-memory sample for
+                        the main JSON -- a list-like .append() drop-in.
 tests/                   pytest suite exercising each module in isolation
                         plus one end-to-end CLI run.
 ```
@@ -55,5 +59,30 @@ for deeply nested archives.
 
 Each record's `hash_algo` field says which one was used, so nothing is silently
 inconsistent across the output.
+
+## Resilience: one bad file must not lose the whole scan
+
+A whole-drive scan runs for a long time and will hit real surprises: archive
+member names with broken encodings, corrupt files, permission quirks. Three
+layers keep any of that from destroying hours of work:
+
+1. `writer.py` sanitizes every string before it's written, so an unwritable
+   character (e.g. a lone surrogate from a badly-encoded archive member name)
+   never reaches the file handle and can't raise mid-write.
+2. `scanner.py` and `archives.py` each wrap their per-item processing in
+   `try/except` — one bad file, or one bad archive member, is logged to
+   `errors` and skipped; everything else keeps going.
+3. `filenav.py`'s top-level loop catches anything that still gets through
+   (plus Ctrl+C) and finishes the JSON file anyway, marking
+   `summary.aborted`/`summary.abort_reason` rather than leaving a truncated,
+   unparseable file behind.
+
+None of this holds if the error bookkeeping itself grows without bound, so
+`errorlog.ErrorSink` replaces the plain `errors` list: every error is written
+to a sidecar log immediately (and flushed, so a hard crash right after doesn't
+lose it) and only a capped sample (`errors.sample`, default first 1000) is
+kept in memory for the main JSON. `errors.count` is the single authoritative
+total — nothing else tracks its own separate error counter, so there's no way
+for the numbers to drift apart.
 
 Related: [[Home]], [[Usage]].

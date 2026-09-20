@@ -39,6 +39,12 @@ path instead (relative or absolute) to control where it lands:
 .venv\Scripts\python filenav.py C:\scans\inventory.json
 ```
 
+By default, the output and error-log filenames are prefixed with the local time
+the scan started (`yyyy-mm-dd-hh-mm-ss_`, 24-hour), so repeated runs never
+overwrite each other and sort chronologically — `output.json` becomes something
+like `2026-09-20-14-05-30_output.json`. Pass `--no-timestamp-prefix` to write
+the exact filename given instead.
+
 By default the scan starts at `C:\`. Override with `--root`:
 
 ```
@@ -58,6 +64,7 @@ Other options (see `filenav.py --help`):
 | `--no-media` | off | Skip image/video metadata extraction (faster) |
 | `--ignore-dirs NAME [NAME ...]` | (none) | Extra directory names to skip, on top of the default list |
 | `--no-default-ignores` | off | Disable the built-in default ignore list entirely |
+| `--no-timestamp-prefix` | off | Write the exact filename given, without the `yyyy-mm-dd-hh-mm-ss_` prefix |
 | `--progress-every` | 5000 | Print progress every N records (0 to disable) |
 
 ## Skipping folders
@@ -76,15 +83,39 @@ want `.git` history included in a duplicate-file audit).
 ## Output format
 
 The output JSON has a `files` array (one entry per real file, plus one entry per
-archive member), an `errors` array (paths that couldn't be read/opened, with why),
-and a `summary` with counts and timings. Archive members carry a `path` that shows
-the full container chain, e.g. `C:\a.zip // inner\b.zip // photo.jpg`.
+archive member), an `errors` array (a capped sample of what couldn't be read/opened,
+with why — see below), and a `summary` with counts and timings. Archive members
+carry a `path` that shows the full container chain, e.g.
+`C:\a.zip // inner\b.zip // photo.jpg`.
 
 The output JSON file itself always gets one final entry in `files` (marked
 `"self_reference": true`) — it can't know its own exact final size while still
 writing itself, so that entry's `size_bytes` is captured just before the last
 few bytes are appended and is documented as a close approximation, not analyzed
 further.
+
+## Errors
+
+Every file or archive member that couldn't be read/hashed/opened is written, as
+it happens, to a sidecar log next to the output — `output.json` gets
+`output.errors.log`, one JSON object per line (`{"path": ..., "error": ...}`), so
+it's greppable on its own without touching the (possibly huge) main JSON, and it's
+never lost even if the scan later aborts hard. This is also where a single bad
+file's error ends up if it doesn't stop the scan (see below).
+
+The main JSON's own `errors` array is a capped sample (first 1000) for quick
+inspection; `summary.errors` is the true total count and
+`summary.errors_sample_truncated` says whether the sample left anything out — the
+sidecar log always has the complete list either way.
+
+## Resilience
+
+A single unreadable file, corrupt archive, or oddly-encoded archive-member name
+is logged as an error and skipped — it does not stop the rest of the scan. Even
+an unexpected crash (or Ctrl+C) mid-scan still finishes the output JSON as valid,
+loadable JSON with everything scanned up to that point (`summary.aborted` /
+`summary.abort_reason` record that it happened), rather than leaving a corrupt,
+truncated file and losing all the work.
 
 ## Tests
 

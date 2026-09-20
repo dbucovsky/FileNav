@@ -249,39 +249,45 @@ def process_archive_file(fs_path, container_chain, depth, opts, emit_record, err
 
         entry_chain = container_chain + [entry["name"]]
         entry_display = " // ".join(entry_chain)
-        digest, algo, skip_reason = hash_member(fs_path, fmt, entry, opts)
 
-        record = {
-            "type": "archive_entry",
-            "path": entry_display,
-            "filename": entry["name"].rsplit("/", 1)[-1],
-            "container_path": container_chain[0],
-            "internal_path": " // ".join(entry_chain[1:]),
-            "nesting_depth": depth,
-            "created": None,
-            "modified": entry["mtime"],
-            "size_bytes": entry["size"],
-            "hash_algo": algo,
-            "hash": digest,
-            "hash_skip_reason": skip_reason,
-        }
-        emit_record(record)
-
-        nested_fmt = detect_archive_format(entry["name"])
-        if not nested_fmt:
-            continue
-        if entry["size"] > opts.max_nested_extract_bytes:
-            errors.append({
-                "path": entry_display,
-                "error": "nested archive exceeds max-nested-extract-size; not expanded",
-            })
-            continue
-
-        extracted_path = _extract_member_to_temp(fs_path, fmt, entry, scratch_dir)
-        if not extracted_path:
-            errors.append({"path": entry_display, "error": "could not extract nested archive for expansion"})
-            continue
+        # One bad member (odd encoding, corrupt local header, ...) must not
+        # abort the rest of this archive, or the scan it's part of.
         try:
-            process_archive_file(extracted_path, entry_chain, depth + 1, opts, emit_record, errors, scratch_dir)
-        finally:
-            shutil.rmtree(os.path.dirname(extracted_path), ignore_errors=True)
+            digest, algo, skip_reason = hash_member(fs_path, fmt, entry, opts)
+
+            record = {
+                "type": "archive_entry",
+                "path": entry_display,
+                "filename": entry["name"].rsplit("/", 1)[-1],
+                "container_path": container_chain[0],
+                "internal_path": " // ".join(entry_chain[1:]),
+                "nesting_depth": depth,
+                "created": None,
+                "modified": entry["mtime"],
+                "size_bytes": entry["size"],
+                "hash_algo": algo,
+                "hash": digest,
+                "hash_skip_reason": skip_reason,
+            }
+            emit_record(record)
+
+            nested_fmt = detect_archive_format(entry["name"])
+            if not nested_fmt:
+                continue
+            if entry["size"] > opts.max_nested_extract_bytes:
+                errors.append({
+                    "path": entry_display,
+                    "error": "nested archive exceeds max-nested-extract-size; not expanded",
+                })
+                continue
+
+            extracted_path = _extract_member_to_temp(fs_path, fmt, entry, scratch_dir)
+            if not extracted_path:
+                errors.append({"path": entry_display, "error": "could not extract nested archive for expansion"})
+                continue
+            try:
+                process_archive_file(extracted_path, entry_chain, depth + 1, opts, emit_record, errors, scratch_dir)
+            finally:
+                shutil.rmtree(os.path.dirname(extracted_path), ignore_errors=True)
+        except Exception as exc:
+            errors.append({"path": entry_display, "error": f"unexpected error processing archive member: {exc}"})

@@ -17,6 +17,17 @@ Folders containing a file named ".filenav-skip" are skipped entirely, along
 with everything under them. A built-in default list of noise directories
 (.git, node_modules, __pycache__, Recycle Bin, etc.) is also skipped unless
 --no-default-ignores is passed; see --ignore-dirs to add more.
+
+Every file/archive-member that couldn't be read or hashed is logged to a
+sidecar "<output>.errors.log" file (one JSON object per line) as it happens;
+the main output JSON also embeds a capped sample (see summary.errors /
+summary.errors_sample_truncated) for quick inspection without opening a
+second file.
+
+By default, both the output and error-log filenames are prefixed with
+yyyy-mm-dd-hh-mm-ss_ (the local time the scan started, 24-hour format), so
+repeated runs never collide and sort chronologically. Pass --no-timestamp-prefix
+to write exactly the filename given.
 """
 
 import argparse
@@ -36,6 +47,7 @@ from filenavlib.config import (
     DEFAULT_ROOTS,
 )
 from filenavlib.drives import resolve_roots
+from filenavlib.errorlog import ErrorSink
 from filenavlib.scanner import ScanOptions, walk_root
 from filenavlib.writer import JsonScanWriter
 
@@ -46,6 +58,18 @@ def resolve_output_path(output_arg, script_dir):
     if os.path.dirname(output_arg):
         return os.path.abspath(output_arg)
     return os.path.join(script_dir, output_arg)
+
+
+def error_log_path_for(output_path):
+    stem, _ext = os.path.splitext(output_path)
+    return stem + ".errors.log"
+
+
+def apply_timestamp_prefix(path, when):
+    """Prefix a path's filename (not its directory) with yyyy-mm-dd-hh-mm-ss_,
+    using the given local datetime, 24-hour format."""
+    directory, basename = os.path.split(path)
+    return os.path.join(directory, when.strftime("%Y-%m-%d-%H-%M-%S") + "_" + basename)
 
 
 def parse_args(argv):
@@ -74,14 +98,23 @@ def parse_args(argv):
              "only .filenav-skip and --ignore-dirs still apply",
     )
     parser.add_argument("--progress-every", type=int, default=5000, help="Print progress every N files (0 to disable)")
+    parser.add_argument(
+        "--no-timestamp-prefix", action="store_true",
+        help="Don't prefix the output/error filenames with yyyy-mm-dd-hh-mm-ss_ "
+             "(the local time the scan started, 24-hour format). On by default.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
+    scan_started = datetime.now()  # local time the script started running
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_path = resolve_output_path(args.output, script_dir)
+    if not args.no_timestamp_prefix:
+        output_path = apply_timestamp_prefix(output_path, scan_started)
+    error_log_path = error_log_path_for(output_path)
 
     roots = resolve_roots(args.root)
     if not roots:
@@ -97,11 +130,13 @@ def main(argv=None):
         max_nested_extract_bytes=int(args.max_nested_extract_mb * 1024 * 1024),
         max_archive_depth=args.max_archive_depth,
         extract_media_metadata=not args.no_media,
-        self_path_norm=os.path.normcase(os.path.abspath(output_path)),
+        self_path_norms=frozenset({
+            os.path.normcase(os.path.abspath(output_path)),
+            os.path.normcase(os.path.abspath(error_log_path)),
+        }),
         ignore_dir_names=frozenset(ignore_dir_names),
     )
 
-    scan_started = datetime.now()
     meta = {
         "scan_started": scan_started.isoformat(),
         "host": platform.node(),
@@ -120,11 +155,11 @@ def main(argv=None):
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     writer = JsonScanWriter(output_path, meta)
+    errors = ErrorSink(error_log_path)
 
-    errors = []
     stats = {
         "files": 0, "bytes": 0, "archives": 0, "archive_entries": 0,
-        "archive_entry_bytes": 0, "errors": 0,
+        "archive_entry_bytes": 0,
         "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "self_deferred": False,
     }
 
@@ -132,16 +167,24 @@ def main(argv=None):
         writer.write_record(record)
         if args.progress_every and (stats["files"] + stats["archive_entries"]) % args.progress_every == 0:
             print(f"\r  ...{stats['files']} files, {stats['archive_entries']} archive entries, "
-                  f"{stats['errors']} errors", end="", file=sys.stderr)
+                  f"{errors.count} errors", end="", file=sys.stderr)
 
     start_time = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="filenav_scratch_") as scratch_dir:
-        for root in roots:
-            print(f"Scanning {root} ...", file=sys.stderr)
-            if not os.path.isdir(root):
-                errors.append({"path": root, "error": "root does not exist or is not accessible"})
-                continue
-            walk_root(root, opts, emit_record, errors, scratch_dir, stats)
+    fatal_error = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="filenav_scratch_") as scratch_dir:
+            for root in roots:
+                print(f"Scanning {root} ...", file=sys.stderr)
+                if not os.path.isdir(root):
+                    errors.append({"path": root, "error": "root does not exist or is not accessible"})
+                    continue
+                walk_root(root, opts, emit_record, errors, scratch_dir, stats)
+    except KeyboardInterrupt:
+        fatal_error = "scan interrupted by user (Ctrl+C)"
+        print(f"\n{fatal_error}; finishing the output file with what was scanned so far...", file=sys.stderr)
+    except Exception as exc:  # never let an unexpected bug throw away hours of scanning
+        fatal_error = f"scan aborted by unexpected error: {exc}"
+        print(f"\n{fatal_error}\nFinishing the output file with what was scanned so far...", file=sys.stderr)
     print(file=sys.stderr)
 
     elapsed = time.monotonic() - start_time
@@ -174,15 +217,21 @@ def main(argv=None):
         "archive_entry_bytes": stats["archive_entry_bytes"],
         "directories_skipped_via_marker": stats["skipped_dirs_marker"],
         "directories_skipped_via_ignore_list": stats["skipped_dirs_ignore_list"],
-        "errors": stats["errors"],
+        "errors": errors.count,
+        "errors_sample_truncated": errors.count > len(errors.sample),
+        "error_log_file": error_log_path,
         "output_file": output_path,
+        "aborted": fatal_error is not None,
+        "abort_reason": fatal_error,
     }
-    writer.close(errors, summary)
+    errors.close()
+    writer.close(errors.sample, summary)
 
-    print(f"Done. {stats['files']} files, {stats['archive_entries']} archive entries, "
-          f"{stats['errors']} errors, {elapsed:.1f}s.")
+    status = "Aborted" if fatal_error else "Done"
+    print(f"{status}. {stats['files']} files, {stats['archive_entries']} archive entries, "
+          f"{errors.count} errors, {elapsed:.1f}s.")
     print(f"Output written to: {output_path}")
-    return 0
+    return 1 if fatal_error else 0
 
 
 if __name__ == "__main__":

@@ -94,8 +94,10 @@ def get_image_info(path):
 def get_video_info(path):
     """Return duration/dimensions/device info via hachoir, when available."""
     try:
+        from hachoir.core import config as hachoir_config
         from hachoir.parser import createParser
         from hachoir.metadata import extractMetadata
+        hachoir_config.quiet = True  # hachoir otherwise prints parser warnings straight to the console
     except ImportError:
         return {"error": "hachoir not installed; video metadata unavailable"}
 
