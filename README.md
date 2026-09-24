@@ -13,6 +13,9 @@ date, camera make/model, GPS location, and (for video) duration — on disk by
 default; pass `--archive-media` to also do this for images/videos found
 *inside* archives (off by default, since it means decompressing every one).
 
+Full documentation: [project wiki](https://github.com/dbucovsky/FileNav/wiki)
+(same content as `doc/wiki/` in this repo).
+
 ## Requirements
 
 - Python 3.9+

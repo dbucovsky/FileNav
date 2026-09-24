@@ -1,0 +1,43 @@
+name: Auto Update Wiki (Git)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'doc/wiki/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Main Repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Wiki Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki-repo-tmp
+
+      - name: Copy Files and Push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp -r doc/wiki/* wiki-repo-tmp/
+
+          cd wiki-repo-tmp
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          git add .
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "Auto-update wiki: ${{ github.sha }}"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.wiki.git" HEAD:master
+          else
+            echo "No documentation changes detected."
+          fi
