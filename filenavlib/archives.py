@@ -15,7 +15,7 @@ import time
 import zipfile
 from datetime import datetime
 
-from . import hashing, media
+from . import dateanalysis, hashing, media
 from .config import (
     ARCHIVE_COMPOUND_EXTS,
     ARCHIVE_SINGLE_EXTS,
@@ -374,6 +374,12 @@ def process_archive_file(fs_path, container_chain, depth, opts, emit_record, err
     if list_elapsed > opts.slow_threshold_seconds:
         logger.warning("Slow archive listing (%.1fs, %d entries): %s", list_elapsed, len(entries), display_path)
 
+    # Memoizes find_dates_in_text() per internal folder segment for this one
+    # archive -- many entries commonly share the same few ancestor folders
+    # (e.g. "src", "docs"), so this avoids re-running the regex matchers on
+    # the same segment string over and over.
+    folder_date_cache = {}
+
     for entry in entries:
         if entry["is_dir"]:
             continue
@@ -426,6 +432,36 @@ def process_archive_file(fs_path, container_chain, depth, opts, emit_record, err
                 record.update(media_info)
                 if stats is not None:
                     stats["archive_media_extracted"] += 1
+
+            if opts.extract_date_analysis:
+                name_parts = entry["name"].split("/")
+                filename_dates = dateanalysis.find_dates_in_text(name_parts[-1])
+
+                folder_path_dates = []
+                for segment in name_parts[:-1]:
+                    if segment not in folder_date_cache:
+                        folder_date_cache[segment] = dateanalysis.find_dates_in_text(segment)
+                    seg_dates = folder_date_cache[segment]
+                    if seg_dates:
+                        folder_path_dates.append({"segment": segment, "dates": seg_dates})
+
+                capture_date = None
+                if media_info:
+                    media_dict = media_info.get("image") or media_info.get("video") or {}
+                    capture_date = media_dict.get("date_taken") or media_dict.get("date_recorded")
+                flags = dateanalysis.compute_flags(None, entry["mtime"], capture_date, opts.scan_reference_time)
+
+                date_analysis = {}
+                if filename_dates:
+                    date_analysis["filename_dates"] = filename_dates
+                if folder_path_dates:
+                    date_analysis["folder_path_dates"] = folder_path_dates
+                if flags:
+                    date_analysis["flags"] = flags
+                    if stats is not None:
+                        stats["date_analysis_flagged"] += 1
+                if date_analysis:
+                    record["date_analysis"] = date_analysis
 
             emit_record(record)
 

@@ -42,6 +42,7 @@ Pass `--no-timestamp-prefix` to write the exact filename given instead.
 | `--no-expand-formats {zip,tar,7z,rar} [...]` | (none) | Record these archive types as a plain file, without opening them |
 | `--no-media` | off | Skip image/video metadata extraction |
 | `--archive-media` | off | Also extract EXIF/video metadata for images/videos found inside archives |
+| `--date-analysis` | off | Extract dates from filenames/folder names; flag future or OS-placeholder timestamps |
 | `--ignore-dirs NAME [NAME ...]` | (none) | Extra folder names to skip, added to the default list |
 | `--exclude-paths PATTERN [PATTERN ...]` | (none) | Glob pattern(s) matched against a file/folder's full path |
 | `--no-default-ignores` | off | Turn off the built-in default ignore list |
@@ -171,6 +172,75 @@ story.
 Subject to the same `--max-hash-size-mb` cap already used to skip hashing
 huge files. `summary.archive_media_extracted` counts how many members got
 metadata this way; `options.archive_media_metadata` records whether it was on.
+
+## Date analysis
+
+Off by default — pass `--date-analysis` to extract dates from filenames and
+folder names, and cross-check them against each file's real timestamps.
+
+### Sources
+
+- **Filename** — the file's own base name (`os.path.basename()`), never the
+  full path.
+- **Folder path** — every ancestor folder *name* between the scanned root
+  and the file, checked individually (not the path as one string). For a
+  real file, this is computed once per directory in `walk_root()`, not once
+  per file — every file in the same directory shares the same ancestors, so
+  the regex matchers only run once for that shared set. For an archive
+  member, this is the entry's own *internal* path segments (e.g.
+  `mypkg/2019-12-19/report.pdf` → checks `mypkg` and `2019-12-19`), not the
+  container archive's real filesystem ancestors — those are already covered
+  by the container file's own record. Archive-internal segments are
+  memoized per archive (not per scan) for the same reason.
+- **Real timestamps** — filesystem `created`/`modified` (already recorded on
+  every file), plus EXIF/video capture date when `--no-media` isn't set (or
+  `--archive-media` is, for archive members).
+
+### Pattern set (most confident first)
+
+| Pattern | Example | Confidence |
+|---|---|---|
+| ISO date+time | `2026-09-20-14-36-25` (also matches this tool's own output-filename prefix) | high |
+| Weekday-month-time-year | `mon-aug-12-09_15_41-2019` | high |
+| Month name | `12-Aug-2019`, `August 12, 2019` | high |
+| Plain ISO date | `2019-12-19`, `2019_12_19` | high |
+| Ambiguous numeric | `08-09-2019` | medium (both readings, `"ambiguous": true`) |
+| Compact `YYYYMMDD` | `20200320` | medium |
+| Bare 4-digit year | `2001` (boundary-anchored, plausible-year range only) | low |
+
+A later, lower-confidence pattern never re-matches a substring an earlier,
+higher-confidence one already claimed (e.g. `08-09-2019`'s ambiguous-numeric
+match "uses up" that span, so the bare-year fallback doesn't also fire on the
+`2019` inside it). This is inherently heuristic — real filenames are too
+varied for any fixed pattern set to be exhaustive, and the bare-year
+fallback especially will occasionally match a non-date number (a project
+code, a serial number). The `"confidence"` field on every candidate exists
+specifically so that's manageable rather than hidden: filter `"low"` matches
+out downstream if they're too noisy for a particular drive.
+
+### Flags
+
+Computed **only** from the real timestamp sources — filesystem
+created/modified, EXIF/video capture date — never from the fuzzy
+filename/folder-path text matches (a folder literally named "1970 Archive"
+isn't evidence of anything wrong):
+
+- **`future_date`** — a source is after the scan's own start time.
+- **`default_epoch_date`** — a source lands within 2 days of a known OS
+  placeholder: 1970-01-01 (Unix epoch), 1980-01-01 (FAT/DOS default), or
+  1601-01-01 (Windows FILETIME zero). A tolerance window, not an exact date
+  match — timestamps are converted to *local* time before comparison, so an
+  exact UTC epoch value can land a day to either side depending on timezone.
+
+Deliberately **not** flagged: `created > modified`, or a capture date that
+differs from the file's own timestamps. Both are completely normal for a
+copied or migrated file — flagging them would cry wolf on nearly every
+archived photo, which is why "validation" here means *collect the data and
+flag only the few things that are almost never legitimate*, not *flag every
+disagreement between sources*.
+
+`summary.date_analysis_flagged` counts records with at least one flag;
+`options.date_analysis` records whether the option was on.
 
 ## Errors
 

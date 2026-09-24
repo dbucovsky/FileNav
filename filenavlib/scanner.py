@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import archives, hashing, media
+from . import archives, dateanalysis, hashing, media
 from .config import IMAGE_EXTS, SKIP_MARKER, VIDEO_EXTS
 
 logger = logging.getLogger("filenav")
@@ -32,6 +32,9 @@ class ScanOptions:
     extract_archive_media_metadata: bool = False  # EXIF/video metadata for images/videos found
     # *inside* archives -- off by default: requires decompressing every such member, which adds
     # real cost on a scan with lots of archived photos/videos
+    extract_date_analysis: bool = False  # dates found in filenames/folder names, plus a few
+    # narrow anomaly flags against the real created/modified/EXIF timestamps -- off by default
+    scan_reference_time: "datetime | None" = None  # scan start time, used for the future_date flag
 
 
 def _iso(ts):
@@ -60,8 +63,13 @@ def should_skip_dir(dirpath, ignore_dir_names=frozenset(), exclude_path_patterns
     return None
 
 
-def build_file_record(fpath, opts):
-    """Return (record, None) on success, or (None, error_dict) on failure."""
+def build_file_record(fpath, opts, folder_path_dates=None, stats=None):
+    """Return (record, None) on success, or (None, error_dict) on failure.
+
+    folder_path_dates: precomputed once per directory by walk_root() (every
+    file in the same directory shares the same ancestor folder names, so
+    there's no reason to re-run the regex matchers per file).
+    """
     try:
         st = os.stat(fpath)
     except OSError as exc:
@@ -104,6 +112,29 @@ def build_file_record(fpath, opts):
         record["archive_format"] = archive_fmt
         if archive_fmt in opts.no_expand_formats:
             record["archive_expansion_skipped"] = True
+
+    if opts.extract_date_analysis:
+        filename_dates = dateanalysis.find_dates_in_text(os.path.basename(fpath))
+        capture_date = None
+        if record.get("image"):
+            capture_date = record["image"].get("date_taken")
+        elif record.get("video"):
+            capture_date = record["video"].get("date_recorded")
+        flags = dateanalysis.compute_flags(
+            record["created"], record["modified"], capture_date, opts.scan_reference_time
+        )
+
+        date_analysis = {}
+        if filename_dates:
+            date_analysis["filename_dates"] = filename_dates
+        if folder_path_dates:
+            date_analysis["folder_path_dates"] = folder_path_dates
+        if flags:
+            date_analysis["flags"] = flags
+            if stats is not None:
+                stats["date_analysis_flagged"] += 1
+        if date_analysis:
+            record["date_analysis"] = date_analysis
 
     return record, None
 
@@ -150,6 +181,12 @@ def walk_root(root, opts, emit_record, errors, scratch_dir, stats):
         # if the log goes quiet, the last "Scanning directory" line is where.
         logger.info("Scanning directory (%d files): %s", len(filenames), dirpath)
 
+        # Every file in this directory shares the same ancestor folder names,
+        # so this runs once per directory, not once per file.
+        folder_path_dates = (
+            dateanalysis.find_dates_in_path_segments(dirpath) if opts.extract_date_analysis else None
+        )
+
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
 
@@ -166,7 +203,7 @@ def walk_root(root, opts, emit_record, errors, scratch_dir, stats):
             # One misbehaving file (corrupt archive, unreadable metadata, odd
             # encoding, ...) must never take the rest of a multi-hour scan down.
             try:
-                record, error = build_file_record(fpath, opts)
+                record, error = build_file_record(fpath, opts, folder_path_dates, stats)
                 if error:
                     errors.append(error)
                     continue

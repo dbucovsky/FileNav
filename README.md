@@ -77,6 +77,7 @@ Other options (see `filenav.py --help`):
 | `--no-expand-formats {zip,tar,7z,rar} [...]` | (none) | Record these archive types as a normal file (path/size/hash) without opening them |
 | `--no-media` | off | Skip image/video metadata extraction (faster) |
 | `--archive-media` | off | Also extract EXIF/video metadata for images/videos found inside archives |
+| `--date-analysis` | off | Extract dates from filenames/folder names; flag future or OS-placeholder timestamps |
 | `--ignore-dirs NAME [NAME ...]` | (none) | Extra directory names to skip, on top of the default list |
 | `--exclude-paths PATTERN [PATTERN ...]` | (none) | Glob pattern(s) matched against a file/folder's full path; a match skips it |
 | `--no-default-ignores` | off | Disable the built-in default ignore list entirely |
@@ -185,6 +186,50 @@ already gets — which means decompressing that member first, so this adds
 real cost on a scan with a lot of archived photos/videos. Subject to the
 same `--max-hash-size-mb` cap already used to skip hashing huge files.
 `summary.archive_media_extracted` counts how many were processed this way.
+
+## Date analysis
+
+Real folders and filenames often carry a date informally, in inconsistent
+formats — `2019-12-19 Desktop`, `backup-mon-aug-12-09_15_41-2019.tar`,
+`MU17-VEH-20200320.7z`. Off by default — pass `--date-analysis` to extract
+these and cross-check them against the file's real timestamps:
+
+```
+.venv\Scripts\python filenav.py output.json --date-analysis
+```
+
+Each record gets a `"date_analysis"` object (only when there's something to
+report):
+
+```jsonc
+"date_analysis": {
+  "filename_dates": [ {"value": "2020-01-01", "source_text": "2020-01-01", "pattern": "iso_date", "confidence": "high", "ambiguous": false} ],
+  "folder_path_dates": [ {"segment": "2019-12-19 Desktop", "dates": [ {"value": "2019-12-19", "...": "..."} ]} ],
+  "flags": ["default_epoch_date"]
+}
+```
+
+- **Extraction is heuristic** — real filenames are too varied for any fixed
+  pattern set to catch everything, and the lowest-confidence pattern (a bare
+  4-digit year) will occasionally false-positive on something that isn't a
+  date at all. Every candidate has a `"confidence"` (`high`/`medium`/`low`)
+  so noisy matches can be filtered out downstream.
+- **Ambiguous numeric dates** (`08-09-2019` could be Aug 9 or Sep 8) report
+  **both** readings, each tagged `"ambiguous": true`, rather than silently
+  guessing a convention.
+- **Flags are deliberately narrow**: `future_date` (a timestamp after the
+  scan itself started) and `default_epoch_date` (a filesystem placeholder —
+  1970-01-01, 1980-01-01, or 1601-01-01). They're computed only from the
+  real timestamp sources (created/modified/EXIF), never from the fuzzy
+  filename/folder-path text matches. `created > modified` and a capture date
+  that differs from the file's own timestamps are **not** flagged — both are
+  normal for a copied or migrated file, so flagging them would cry wolf on
+  nearly every archived photo.
+- Applies to archive members too (using the entry's own internal path and
+  modified time), when combined with `--archive-media` for the capture-date
+  comparison.
+
+`summary.date_analysis_flagged` counts how many records got at least one flag.
 
 ## Output format
 

@@ -95,6 +95,7 @@ ARG_DEFAULTS = {
     "max_archive_depth": DEFAULT_MAX_ARCHIVE_DEPTH,
     "no_media": False,
     "archive_media": False,
+    "date_analysis": False,
     "ignore_dirs": [],
     "exclude_paths": [],
     "no_expand_formats": [],
@@ -117,6 +118,7 @@ CONFIG_SCHEMA = {
     "max_archive_depth": int,
     "no_media": bool,
     "archive_media": bool,
+    "date_analysis": bool,
     "ignore_dirs": list,
     "exclude_paths": list,
     "no_expand_formats": list,
@@ -184,6 +186,11 @@ def parse_args(argv):
         "--archive-media", action="store_true", default=argparse.SUPPRESS,
         help="Also extract EXIF/video metadata for images/videos found inside archives "
              "(off by default: requires decompressing every such member found)",
+    )
+    parser.add_argument(
+        "--date-analysis", action="store_true", default=argparse.SUPPRESS,
+        help="Extract dates found in filenames/folder names, and flag files with a future "
+             "or OS-placeholder (1970/1980/1601) created/modified/EXIF date (off by default)",
     )
     parser.add_argument(
         "--ignore-dirs", nargs="*", default=argparse.SUPPRESS,
@@ -275,6 +282,8 @@ def main(argv=None):
         max_archive_depth=args.max_archive_depth,
         extract_media_metadata=not args.no_media,
         extract_archive_media_metadata=args.archive_media,
+        extract_date_analysis=args.date_analysis,
+        scan_reference_time=scan_started,
         slow_threshold_seconds=args.slow_threshold_seconds,
         self_path_norms=frozenset({
             os.path.normcase(os.path.abspath(output_path)),
@@ -299,6 +308,7 @@ def main(argv=None):
             "max_archive_depth": opts.max_archive_depth,
             "media_metadata": opts.extract_media_metadata,
             "archive_media_metadata": opts.extract_archive_media_metadata,
+            "date_analysis": opts.extract_date_analysis,
             "default_ignores_applied": not args.no_default_ignores,
             "ignore_dir_names": sorted(opts.ignore_dir_names),
             "exclude_path_patterns": sorted(opts.exclude_path_patterns),
@@ -316,6 +326,7 @@ def main(argv=None):
     stats = {
         "files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
         "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+        "date_analysis_flagged": 0,
         "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
         "skipped_files_path_pattern": 0, "self_deferred": False,
     }
@@ -404,6 +415,7 @@ def main(argv=None):
         "files_skipped_via_path_pattern": stats["skipped_files_path_pattern"],
         "archive_entries_skipped_ignore_list": stats["archive_entries_skipped_ignore_list"],
         "archive_media_extracted": stats["archive_media_extracted"],
+        "date_analysis_flagged": stats["date_analysis_flagged"],
         "errors": errors.count,
         "errors_sample_truncated": errors.count > len(errors.sample),
         "error_log_file": error_log_path,

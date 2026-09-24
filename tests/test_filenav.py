@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -13,7 +14,7 @@ from datetime import datetime
 import pytest
 
 import filenav
-from filenavlib import archives, hashing, scanner
+from filenavlib import archives, dateanalysis, hashing, scanner
 from filenavlib.archives import find_seven_zip
 from filenavlib.configfile import ConfigError, load_config
 from filenavlib.errorlog import ErrorSink
@@ -37,7 +38,7 @@ def test_skip_marker_excludes_folder_and_subtree(tmp_path):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0, "skipped_files_path_pattern": 0, "self_deferred": False}
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -62,7 +63,7 @@ def test_ignore_dir_names_excludes_folder_and_subtree(tmp_path):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0, "skipped_files_path_pattern": 0, "self_deferred": False}
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -242,10 +243,10 @@ def test_one_bad_file_does_not_abort_the_whole_walk(tmp_path, monkeypatch):
 
     real_build = scanner.build_file_record
 
-    def flaky_build(fpath, opts):
+    def flaky_build(fpath, opts, *args):
         if fpath.endswith("bad.txt"):
             raise RuntimeError("simulated unexpected failure")
-        return real_build(fpath, opts)
+        return real_build(fpath, opts, *args)
 
     monkeypatch.setattr(scanner, "build_file_record", flaky_build)
 
@@ -253,7 +254,7 @@ def test_one_bad_file_does_not_abort_the_whole_walk(tmp_path, monkeypatch):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0, "skipped_files_path_pattern": 0, "self_deferred": False}
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -311,10 +312,10 @@ def test_main_writes_sidecar_error_log_next_to_output(tmp_path, monkeypatch):
 
     real_build = scanner.build_file_record
 
-    def flaky_build(fpath, opts):
+    def flaky_build(fpath, opts, *args):
         if fpath.endswith("bad.txt"):
             raise RuntimeError("simulated failure for error-log test")
-        return real_build(fpath, opts)
+        return real_build(fpath, opts, *args)
 
     monkeypatch.setattr(scanner, "build_file_record", flaky_build)
 
@@ -748,7 +749,7 @@ def test_exclude_path_patterns_skips_a_matching_folder_and_its_subtree(tmp_path)
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
               "skipped_files_path_pattern": 0, "self_deferred": False}
 
@@ -768,7 +769,7 @@ def test_exclude_path_patterns_skips_a_single_matching_file_only(tmp_path):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
               "skipped_files_path_pattern": 0, "self_deferred": False}
 
@@ -859,7 +860,7 @@ def test_no_expand_formats_records_the_archive_file_but_skips_its_contents(tmp_p
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
               "skipped_files_path_pattern": 0, "self_deferred": False}
 
@@ -888,7 +889,7 @@ def test_no_expand_formats_leaves_other_formats_unaffected(tmp_path):
     records = []
     errors = []
     stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
-              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0, "date_analysis_flagged": 0,
               "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
               "skipped_files_path_pattern": 0, "self_deferred": False}
 
@@ -1054,3 +1055,185 @@ def test_archive_media_flag_end_to_end(tmp_path):
     assert photo_record["image"]["height"] == 16
     assert data["summary"]["archive_media_extracted"] == 1
     assert data["options"]["archive_media_metadata"] is True
+
+
+def test_find_dates_in_text_covers_the_real_formats_seen_on_disk():
+    def values(text):
+        return {c["value"] for c in dateanalysis.find_dates_in_text(text)}
+
+    assert "2019-12-19" in values("2019-12-19 Desktop")
+    assert "2026-09-20T14:36:25" in values("2026-09-20-14-36-25_output.json")
+    assert "2020-03-20" in values("MU17-VEH-20200320.7z")
+    assert "2019-08-12T09:15:41" in values("backup-mon-aug-12-09_15_41-2019.tar")
+    assert "2019-08-12" in values("August 12, 2019 report.docx")
+    assert "2019-08-12" in values("12-Aug-2019.zip")
+
+    ambiguous = dateanalysis.find_dates_in_text("08-09-2019")
+    assert {c["value"] for c in ambiguous} == {"2019-08-09", "2019-09-08"}
+    assert all(c["ambiguous"] for c in ambiguous)
+
+    bare_year = dateanalysis.find_dates_in_text("TF-2001")
+    assert len(bare_year) == 1
+    assert bare_year[0]["confidence"] == "low"
+    assert bare_year[0]["pattern"] == "bare_year"
+
+    assert dateanalysis.find_dates_in_text("no_date_here_at_all.txt") == []
+    assert dateanalysis.find_dates_in_text("103-01-LR-PWA-BOM-V1") == []
+
+
+def test_find_dates_in_path_segments_only_returns_dated_segments():
+    result = dateanalysis.find_dates_in_path_segments(r"C:\TSoM\Old\Mixed\2018-09-16_Desktop\Work")
+    assert len(result) == 1
+    assert result[0]["segment"] == "2018-09-16_Desktop"
+    assert result[0]["dates"][0]["value"] == "2018-09-16"
+
+
+def test_compute_flags_narrow_anomalies_only():
+    from datetime import datetime as dt
+
+    ref = dt(2026, 9, 24, 12, 0, 0)
+
+    assert dateanalysis.compute_flags(None, "2027-01-01T00:00:00", None, ref) == ["future_date"]
+    assert dateanalysis.compute_flags("1970-01-01T00:00:00", "2020-01-01T00:00:00", None, ref) == [
+        "default_epoch_date"
+    ]
+    assert dateanalysis.compute_flags("2020-01-01T00:00:00", "2020-06-01T00:00:00", None, ref) == []
+
+    # The explicitly-agreed non-goals: neither created > modified nor a
+    # differing capture date is itself an anomaly (both are normal for a
+    # copied/migrated file).
+    assert dateanalysis.compute_flags("2024-01-01T00:00:00", "2020-06-01T00:00:00", None, ref) == []
+    assert dateanalysis.compute_flags(
+        "2020-01-01T00:00:00", "2020-06-01T00:00:00", "2010:01:01 00:00:00", ref
+    ) == []
+
+
+def test_date_analysis_disabled_by_default(tmp_path):
+    (tmp_path / "2019-12-19 Desktop").mkdir()
+    (tmp_path / "2019-12-19 Desktop" / "report-2020-01-01.txt").write_text("x")
+
+    opts = ScanOptions()  # extract_date_analysis defaults to False
+    records = []
+    errors = []
+    stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "date_analysis_flagged": 0,
+              "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
+              "skipped_files_path_pattern": 0, "self_deferred": False}
+
+    with tempfile.TemporaryDirectory() as scratch:
+        walk_root(str(tmp_path), opts, records.append, errors, scratch, stats)
+
+    record = next(r for r in records if r["filename"] == "report-2020-01-01.txt")
+    assert "date_analysis" not in record
+
+
+def test_date_analysis_collects_filename_and_folder_dates_and_flags_when_enabled(tmp_path):
+    from datetime import datetime as dt, timedelta
+
+    dated_folder = tmp_path / "2019-12-19 Desktop"
+    dated_folder.mkdir()
+    (dated_folder / "report-2020-01-01.txt").write_text("x")
+    (dated_folder / "no_date_here.txt").write_text("y")
+
+    opts = ScanOptions(extract_date_analysis=True, scan_reference_time=dt.now() + timedelta(days=1))
+    records = []
+    errors = []
+    stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "date_analysis_flagged": 0,
+              "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
+              "skipped_files_path_pattern": 0, "self_deferred": False}
+
+    with tempfile.TemporaryDirectory() as scratch:
+        walk_root(str(tmp_path), opts, records.append, errors, scratch, stats)
+
+    dated_record = next(r for r in records if r["filename"] == "report-2020-01-01.txt")
+    da = dated_record["date_analysis"]
+    assert da["filename_dates"][0]["value"] == "2020-01-01"
+    assert da["folder_path_dates"][0]["segment"] == "2019-12-19 Desktop"
+    assert da["folder_path_dates"][0]["dates"][0]["value"] == "2019-12-19"
+    assert "flags" not in da  # ordinary dates, well before the reference time -- no anomaly
+
+    undated_record = next(r for r in records if r["filename"] == "no_date_here.txt")
+    # Still gets the shared folder_path_dates (attached per-directory), but no filename_dates.
+    assert "filename_dates" not in undated_record["date_analysis"]
+    assert undated_record["date_analysis"]["folder_path_dates"][0]["segment"] == "2019-12-19 Desktop"
+
+
+def test_date_analysis_folder_dates_computed_once_per_directory_not_per_file(tmp_path, monkeypatch):
+    dated_folder = tmp_path / "2019-12-19 Desktop"
+    dated_folder.mkdir()
+    for i in range(5):
+        (dated_folder / f"file{i}.txt").write_text("x")
+
+    call_count = [0]
+    real_find = dateanalysis.find_dates_in_path_segments
+
+    def counting_find(path):
+        call_count[0] += 1
+        return real_find(path)
+
+    monkeypatch.setattr(dateanalysis, "find_dates_in_path_segments", counting_find)
+
+    opts = ScanOptions(extract_date_analysis=True)
+    records = []
+    errors = []
+    stats = {"files": 0, "bytes": 0, "archives": 0, "archives_not_expanded": 0, "archive_entries": 0,
+              "archive_entry_bytes": 0, "archive_entries_skipped_ignore_list": 0, "archive_media_extracted": 0,
+              "date_analysis_flagged": 0,
+              "skipped_dirs_marker": 0, "skipped_dirs_ignore_list": 0, "skipped_dirs_path_pattern": 0,
+              "skipped_files_path_pattern": 0, "self_deferred": False}
+
+    with tempfile.TemporaryDirectory() as scratch:
+        walk_root(str(tmp_path), opts, records.append, errors, scratch, stats)
+
+    # One call per directory visited (root + dated_folder), not one per file.
+    assert call_count[0] == 2
+    assert len(records) == 5
+
+
+def test_date_analysis_flag_end_to_end(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "old_placeholder.txt").write_text("x")
+    old = str(root / "old_placeholder.txt")
+    epoch_ts = 0  # 1970-01-01
+    os.utime(old, (epoch_ts, epoch_ts))
+
+    output_path = tmp_path / "out.json"
+    rc = filenav.main([
+        str(output_path), "--root", str(root), "--no-media", "--no-timestamp-prefix", "--progress-every", "0",
+        "--date-analysis",
+    ])
+    assert rc == 0
+
+    with open(output_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    record = next(r for r in data["files"] if r["filename"] == "old_placeholder.txt")
+    assert "default_epoch_date" in record["date_analysis"]["flags"]
+    assert data["summary"]["date_analysis_flagged"] >= 1
+    assert data["options"]["date_analysis"] is True
+
+
+def test_date_analysis_for_archive_entries_uses_internal_path(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    with zipfile.ZipFile(root / "backup.zip", "w") as zf:
+        zf.writestr("2019-12-19_export/report-2020-01-01.txt", b"x")
+
+    output_path = tmp_path / "out.json"
+    rc = filenav.main([
+        str(output_path), "--root", str(root), "--no-media", "--no-timestamp-prefix", "--progress-every", "0",
+        "--date-analysis",
+    ])
+    assert rc == 0
+
+    with open(output_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    entry = next(r for r in data["files"] if r["filename"] == "report-2020-01-01.txt")
+    da = entry["date_analysis"]
+    assert da["filename_dates"][0]["value"] == "2020-01-01"
+    assert da["folder_path_dates"][0]["segment"] == "2019-12-19_export"

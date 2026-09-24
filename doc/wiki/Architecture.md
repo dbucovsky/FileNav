@@ -31,6 +31,9 @@ filenavlib/
   configfile.py                 Loads/validates the --config JSON file
                         against a caller-supplied schema; knows nothing
                         about argparse.
+  dateanalysis.py                Heuristic date extraction from filenames/
+                        folder names (--date-analysis), plus a narrow set of
+                        anomaly flags against the real timestamp sources.
 tests/                   pytest suite exercising each module in isolation
                         plus one end-to-end CLI run.
 ```
@@ -236,5 +239,45 @@ Both paths write to a temp file under the run's shared `scratch_dir` (so
 cleanup on a hard abort is the same as everywhere else) and delete it
 immediately after; only `"image"`/`"video"` survive on the record, matching
 the shape a loose on-disk file's record already has.
+
+## Date analysis: heuristic by design, and two performance decisions
+
+`dateanalysis.find_dates_in_text()` tries an ordered list of regex patterns
+against a single filename or folder name and keeps the highest-confidence
+match for any given substring (a `consumed` span list prevents, say, the
+bare-year fallback from also matching the `2019` inside an already-claimed
+`08-09-2019`). This can never be exhaustive — real filenames are too varied
+— so every candidate carries a `"confidence"` rather than pretending to be
+authoritative, and a numeric date that's genuinely ambiguous (`08-09-2019`)
+returns *both* readings tagged `"ambiguous": true` instead of silently
+guessing a locale convention.
+
+Two performance decisions, both following directly from lessons learned
+earlier in this project (the tar O(n²) hashing fix):
+
+1. **Folder-path dates are computed once per directory, not once per file.**
+   `os.walk()`'s `dirpath` is constant for every file returned in the same
+   iteration, so `scanner.walk_root()` calls
+   `dateanalysis.find_dates_in_path_segments()` exactly once per directory
+   (right next to the existing `"Scanning directory"` log line) and passes
+   the result into `build_file_record()` for every file in that batch.
+2. **Archive-internal folder segments are memoized per archive.** Many
+   archive members commonly share the same few ancestor folders (`src`,
+   `docs`, ...); `archives.process_archive_file()` keeps a plain dict cache
+   keyed by segment string, scoped to that one archive's call (not
+   scan-wide — simpler, and the within-one-archive redundancy is what
+   actually shows up in practice).
+
+**Why the epoch-placeholder flag uses a tolerance window, not an exact date
+match:** `default_epoch_date` originally compared `(year, month, day)`
+against exactly `(1970, 1, 1)`/`(1980, 1, 1)`/`(1601, 1, 1)` and missed real
+cases in testing. The root cause: every timestamp reaching `compute_flags()`
+has already gone through `datetime.fromtimestamp()` upstream, which converts
+to *local* time — on a UTC-5 machine, `os.utime(path, (0, 0))` (literally
+"set to the Unix epoch") produces `1969-12-31 19:00:00` locally, one day
+short of the exact-match check. Fixed by comparing `abs(dt - epoch) <=
+timedelta(days=2)` against each reference instant instead of an exact
+calendar-date match — robust to timezone shift without being so wide it
+could catch an unrelated nearby date.
 
 Related: [[Home]], [[Usage]].
