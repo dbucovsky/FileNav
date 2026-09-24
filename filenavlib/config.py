@@ -39,6 +39,14 @@ SEVEN_ZIP_FALLBACK_PATHS = [
     r"C:\Program Files (x86)\7-Zip\7z.exe",
 ]
 
+# Hard ceiling on any single 7z subprocess call (listing an archive, or
+# extracting one member). Generous enough for a legitimately huge archive,
+# but bounded so a password-protected/corrupt/otherwise-stuck archive can't
+# hang the whole scan -- see also stdin=DEVNULL on every 7z call, the actual
+# fix for the specific case this was written for (a password prompt reading
+# from an inherited, un-attended console and blocking forever).
+SEVEN_ZIP_TIMEOUT_SECONDS = 300
+
 # Directory *names* (matched case-insensitively against the basename) that are
 # skipped by default -- machine-generated noise, not real user data. A folder
 # matching one of these is excluded the same way a .filenav-skip marker would
